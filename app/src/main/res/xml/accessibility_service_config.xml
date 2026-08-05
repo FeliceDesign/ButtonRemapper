@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Deliberately the narrowest accessibility service Android allows.
+
+    We request key-event filtering and NOTHING else. In particular:
+      * canRetrieveWindowContent="false" - we never read the screen
+      * accessibilityEventTypes="typesNone" - we register for no events
+      * no flagDefault / flagIncludeNotImportantViews / flagReportViewIds
+      * no canRequestTouchExplorationMode, no canPerformGestures
+
+    This matters. Chromium/WebView initialises its accessibility engine lazily and
+    picks an AXMode based on which services are running and what they ask for. A
+    service that requests window content (as general-purpose remappers must, in
+    order to detect the focused app) flips WebView into full accessibility mode,
+    which rebuilds its node tree and changes touch/long-press/drag handling - the
+    drag-and-drop breakage seen in WebView apps such as Obsidian.
+
+    Requesting no content and no events should leave that engine asleep. Do not add
+    capabilities here without re-testing drag and drop in a WebView app.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typesNone"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRequestFilterKeyEvents"
+    android:canRequestFilterKeyEvents="true"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/service_description"
+    android:notificationTimeout="0"
+    android:summary="@string/service_summary" />

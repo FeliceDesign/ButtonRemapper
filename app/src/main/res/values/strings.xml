@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ButtonRemapper</string>
+    <string name="service_summary">Listens for one hardware key</string>
+    <string name="service_description">Watches for a single hardware button so it can run the shortcuts you assign to it. This service does not read the contents of your screen.</string>
+</resources>

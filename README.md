@@ -1,0 +1,72 @@
+# ButtonRemapper
+
+Remaps the Nothing Phone Essential Key to shortcuts you choose — single, double and long
+press — using an accessibility service that **reads no screen content**, so it does not
+break drag-and-drop and scrolling in WebView apps the way general-purpose remappers do.
+
+See [docs/DESIGN.md](docs/DESIGN.md) for why that constraint exists and what it costs.
+
+> **Not yet compiled.** This was written in an environment without access to the Android
+> SDK or Google's Maven repository, so it has never been through a compiler. Expect to fix
+> a few small things on first build.
+
+## Prerequisites
+
+The Essential Key must already be freed from Essential Space, which is a one-time ADB step:
+
+```
+adb shell pm disable-user --user 0 com.nothing.ntessentialspace
+adb shell pm disable-user --user 0 com.nothing.ntessentialrecorder
+```
+
+This persists across reboots. To undo it, `adb shell pm enable <package>`.
+
+Without this the key is consumed by Nothing OS above normal input dispatch and never
+reaches any app.
+
+## Build
+
+```
+./gradlew assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
+
+## Set up
+
+1. Open the app, enable the accessibility service when prompted.
+2. Tap **Learn key**, press the Essential Key once. It will report `keyCode 0`
+   (`KEYCODE_UNKNOWN`) — that is expected, which is why the app matches on **scan code**.
+3. Assign actions to single, double and long press.
+4. Only if you bind a **Launch app** action: grant "Display over other apps".
+
+## The test that matters
+
+The premise of this app is that a minimal, key-only accessibility service does not cause
+the WebView breakage that Key Mapper does. That is reasoned from Chromium's documented
+AXMode behaviour, **not** from a confirmed report of this exact configuration. Verify it:
+
+1. Turn **off** Key Mapper's accessibility service.
+2. Turn **on** ButtonRemapper's.
+3. In Obsidian, drag to reorder items in the file explorer, outline and bookmarks.
+4. Check scrolling in a long note.
+
+If drag-and-drop works, the approach holds. If it does not, the fallback is a shell-hosted
+`getevent` reader that uses no accessibility service at all — see `PLAN.md` §3 Option B.
+
+## Known unknowns
+
+- **Screen off / locked.** Whether `onKeyEvent` is delivered with the screen off is
+  untested. This matters most for the flashlight, which is the main use case.
+- **Scan code stability.** Device ids are not guaranteed stable across reboots, so
+  device-id matching is off by default. If the key stops working after a reboot, re-learn it
+  and leave that setting off.
+- **OS updates.** A Nothing OS update may re-enable Essential Space, which would take the
+  key back. Re-run the ADB commands if that happens.
+
+## Actions
+
+Torch · launch app · play/pause · next · previous · volume up/down/mute · back · home ·
+recents · notification shade · quick settings · power menu · lock screen · screenshot.
+
+All of them are stateless system operations — none needs to know what is on screen. That is
+what keeps the service minimal.

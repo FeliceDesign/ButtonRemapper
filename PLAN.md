@@ -8,6 +8,12 @@ verified working with Key Mapper. The remaining problem is Key Mapper's accessib
 service causing drag/scroll collisions in other apps (Obsidian). This plan is about
 replacing that capture mechanism.
 
+**Option A is now implemented** as a general remapper — single, double and long press, each
+bindable to any action in a fixed catalog of stateless system operations. See
+[README.md](README.md) to build and run it, and [docs/DESIGN.md](docs/DESIGN.md) for the
+constraint that keeps it safe. It has not been compiled (no Android SDK in the authoring
+environment) and the WebView drag test is still outstanding.
+
 ---
 
 ## 1. Background: freeing the key (already done)
