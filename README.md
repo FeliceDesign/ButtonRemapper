@@ -40,6 +40,33 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 3. Assign actions to single, double and long press.
 4. Only if you bind a **Launch app** action: grant "Display over other apps".
 
+## "Restricted setting" — the accessibility toggle is greyed out
+
+Expected on Android 13+, and nothing to do with debug vs release builds or with how the
+APK is signed. Android blocks accessibility and notification-listener toggles for any app
+installed **outside an app store**, because that is how malware abuses the accessibility
+API. Sideloaded is sideloaded, whichever build you install.
+
+Two ways past it:
+
+**Per install, on the phone.** Settings → Apps → See all apps → ButtonRemapper → ⋮ (top
+right) → **Allow restricted settings** → confirm with your PIN. Then enable the service in
+Accessibility → Downloaded apps. The menu entry may only appear after you have tapped the
+greyed-out toggle once.
+
+**At install time, from ADB.** Marking an app store as the installer avoids the
+restriction entirely:
+
+```
+adb install -i com.android.vending app-debug.apk
+```
+
+Worth using for the CI artifact, since a reinstall otherwise means redoing the menu dance.
+
+This app deliberately does **not** declare `android:isAccessibilityTool`. That attribute is
+reserved for tools that help people with disabilities; Google explicitly classes automation
+tools like remappers as ineligible. It would not lift the restriction anyway.
+
 ## The test that matters
 
 The premise of this app is that a minimal, key-only accessibility service does not cause
