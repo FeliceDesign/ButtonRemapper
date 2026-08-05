@@ -1,195 +1,205 @@
 # ButtonRemapper — Plan
 
-Remap the **Essential Key** on the Nothing Phone (4a) / (4a) Pro to toggle the flashlight.
-No root. One-time setup performed **inside the app** over wireless ADB (no PC).
+Remap the **Essential Key** on the Nothing Phone (4a) / (4a) Pro to toggle the flashlight,
+**without leaving a content-reading accessibility service enabled all the time**.
+
+Status: the Essential Key has already been freed (Essential Space disabled via ADB) and
+verified working with Key Mapper. The remaining problem is Key Mapper's accessibility
+service causing drag/scroll collisions in other apps (Obsidian). This plan is about
+replacing that capture mechanism.
 
 ---
 
-## 1. Why the accessibility-only approach fails
+## 1. Background: freeing the key (already done)
 
-This is the part worth getting right, because it explains both failure modes.
-
-**Failure 1 — the key never reaches you.** The Essential Key is claimed by Nothing OS
-*above* the normal input dispatch path and routed straight to Essential Space. It is
-consumed before `AccessibilityService.onKeyEvent()` is ever called, so an accessibility
-service with `flagRequestFilterKeyEvents` sees nothing at all. No amount of accessibility
-configuration fixes this — the event is gone before your process is in the loop.
-
-The fix is to remove the consumer:
+Nothing OS claims the Essential Key above normal input dispatch and routes it to Essential
+Space, so it never reaches `onKeyEvent()`. Disabling the consumer frees it:
 
 ```
 pm disable-user --user 0 com.nothing.ntessentialspace
 pm disable-user --user 0 com.nothing.ntessentialrecorder
 ```
 
-With those disabled, the key falls through to ordinary dispatch and **accessibility does
-receive it**. This is the mechanism behind every working community remap (Key Mapper etc.).
+This is persistent package state — it survives reboot. Undo with `pm enable <pkg>`.
 
-**Failure 2 — you receive it but don't recognise it.** Once it does arrive, the event
-reports `keyCode == 0` (`KEYCODE_UNKNOWN`). Key Mapper displays it as *"unknown keycode 0"*.
-Any handler written as `if (event.keyCode == KEYCODE_X)` silently never matches.
-
-> **The key must be identified by `event.scanCode` (+ `event.deviceId`), not `keyCode`.**
-
-So accessibility *is* the right capture mechanism — it just needs (a) the system consumer
-disabled and (b) scan-code matching. Both are handled below.
-
-### Persistence
-
-`pm disable-user` is a persistent package state, and the enabled accessibility service is a
-persistent setting. Neither resets on reboot. The ADB step is therefore genuinely **one
-time** — wireless debugging can be switched off again immediately afterwards and the remap
-keeps working forever.
+Once freed, the key reports `keyCode == 0` (`KEYCODE_UNKNOWN`), so it must be identified by
+**`scanCode` + `deviceId`**, never by `keyCode`.
 
 ---
 
-## 2. Architecture
+## 2. Root cause of the drag/scroll collisions
 
-Four pieces, cleanly separated:
+This is not "accessibility services break drag and drop" in general. The real variable is
+narrower, and it decides the whole design.
 
-| Module | Responsibility |
-|---|---|
-| `adb/` | One-time wireless-ADB pairing + command execution (embedded ADB client) |
-| `service/` | `AccessibilityService` that filters and consumes the key |
-| `action/` | Torch controller (and future actions) |
-| `ui/` | Setup wizard, key-learn screen, binding config |
+Obsidian's UI is a WebView (CodeMirror). Per [Chromium's Android accessibility
+docs](https://chromium.googlesource.com/chromium/src.git/+/HEAD/docs/accessibility/browser/android.md),
+WebView's accessibility engine is **lazily initialised and tailored to whoever is asking**:
 
-### 2.1 Embedded ADB — [`libadb-android`](https://github.com/MuntashirAkon/libadb-android)
+- It initialises when `getAccessibilityNodeProvider` is first called — which only happens
+  for services that actually want window content.
+- **Custom AXModes**: Chromium "queries the list of running services, and sets a specific
+  AXMode based on the services that are running, to tailor the native accessibility engine
+  to the current situation."
+- **On-demand event dispatch**: services register which event types they need, and events
+  outside that set are dropped.
+- **Auto-disable**: "When we detect that a user has not been using the accessibility engine
+  and no longer has an accessibility service running, we stop the engine and teardown all
+  the related objects to improve performance."
 
-`implementation 'com.github.MuntashirAkon:libadb-android:3.1.1'` (JitPack).
-Apache-2.0 / GPL-3 dual licensed. Speaks the ADB protocol from inside the app, supports
-Android 11+ wireless-debugging **pairing codes**, and exposes the `shell:` service.
+Key Mapper trips all of this because it uses the accessibility API to **detect the focused
+app** (for app-specific key maps and constraints). That requires
+`canRetrieveWindowContent="true"` and broad event types — `typeAllMask`-style registration
+forces the system to notify it of essentially every accessibility event OS-wide.
 
-This is what makes the setup "a thing in the app" rather than "plug into a laptop":
-the app pairs with the phone's *own* ADB daemon over loopback.
+The result: with Key Mapper enabled, WebView flips into full accessibility mode everywhere,
+rebuilding its node tree and altering touch/long-press/drag handling. That is the collision.
 
-- `AdbMdns` discovers `_adb-tls-pairing._tcp` and `_adb-tls-connect._tcp`, so the app
-  finds the ports itself — the user only types the 6-digit pairing code.
-- The RSA keypair is generated once and persisted; the phone remembers the pairing, but
-  we never need to reconnect anyway.
+> **The trigger is "a running service asks for window content", not "an accessibility
+> service exists".** Key event filtering and content retrieval are separate capabilities.
 
-### 2.2 Setup command sequence
+This is a design consequence of Key Mapper being a general-purpose remapper. It will not be
+"fixed" — the feature that causes it is the feature people want from that app. We don't
+need that feature.
 
-Run once, in order, with output surfaced in the UI:
+---
 
-1. `pm list packages | grep essential` — **discover** the real package names rather than
-   hardcoding them. The 3a-era names above are the expected ones, but confirm on-device.
-2. `pm disable-user --user 0 <essential space pkg>`
-3. `pm disable-user --user 0 <essential recorder pkg>` (frees long-press too)
-4. `pm grant <our.pkg> android.permission.WRITE_SECURE_SETTINGS` — lets the app enable
-   and self-heal its own accessibility service without sending the user into Settings.
-5. Verify: `pm list packages -d` shows both as disabled.
+## 3. Capture options
 
-Every step reversible; see §6.
+### Option A — minimal, key-only accessibility service *(recommended first attempt)*
 
-### 2.3 Capture service
+Declare the narrowest service Android allows:
 
 ```xml
 <accessibility-service
     android:canRequestFilterKeyEvents="true"
-    android:accessibilityFlags="flagRequestFilterKeyEvents|flagDefault" />
+    android:accessibilityFlags="flagRequestFilterKeyEvents"
+    android:accessibilityEventTypes="typesNone"
+    android:canRetrieveWindowContent="false"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="0" />
 ```
 
-`onKeyEvent(KeyEvent)`:
-- match on `scanCode` + `deviceId` against the stored binding
-- run our own press-pattern detection from `ACTION_DOWN`/`ACTION_UP` timing
-  (single / double / long) — since we now own the raw key, all three gestures are ours
-- `return true` to consume, so nothing else reacts
+No window content, no event types, no touch exploration, no
+`flagIncludeNotImportantViews`, no `flagDefault`. Under Chromium's AXMode logic this should
+compute to an empty/minimal mode, so WebView never enables its tree and Obsidian's drag
+handling is untouched.
 
-### 2.4 Learn-the-key flow
+- **Pros:** keeps the one-time-setup property; no persistent shell process; works from boot
+  with zero re-arming; can consume the key (`return true`).
+- **Cons / honest caveat:** this is reasoned from Chromium's documented architecture, not
+  from a confirmed report of this exact configuration. `AccessibilityManager.isEnabled()`
+  still returns true globally, so an app that naively branches on *that* would still change
+  behaviour. Obsidian's problem is WebView-internal and AXMode-driven, so it should be
+  clear — but it must be tested.
+- **The test is cheap and decisive:** build a stub service with the config above that only
+  logs key events, enable it, disable Key Mapper, and try dragging in Obsidian. ~30 minutes,
+  and it settles the entire architecture question.
 
-Never hardcode the scan code. A "Press the Essential Key now" screen captures the next
-unrecognised event, records `scanCode` + `deviceId`, and stores it in DataStore. This also
-makes the app work unchanged on the 3a, Phone (3), and CMF devices.
+### Option B — no accessibility service at all: shell-hosted evdev reader
 
-### 2.5 Torch
+Since Essential Space is already disabled, the key does nothing. We don't need to
+*intercept* it — only to *observe* it. So read the raw input device directly.
 
-`CameraManager.setTorchMode(id, on)` — **no permission required**. Pick the camera whose
-`FLASH_INFO_AVAILABLE` is true, preferring `LENS_FACING_BACK`. Track real state with
-`registerTorchCallback` rather than a local boolean, so the toggle stays correct when
-another app or the QS tile changes the torch.
+`/dev/input/event*` is readable by the **shell** uid (this is why `adb shell getevent` works
+without root) but **not** by a normal app uid — SELinux blocks the app domain. So the reader
+has to run in a shell-uid process:
+
+- **Shizuku user service**, or
+- our own persistent embedded-ADB `shell:` session running `getevent -lq`
+
+The app parses the event stream, matches the scan code, and toggles the torch. Zero
+accessibility services enabled anywhere on the device — the collision becomes structurally
+impossible.
+
+- **Pros:** completely sidesteps the problem class. Passive read, so it doesn't consume or
+  alter any other input.
+- **Cons:** needs a live shell process. After reboot it must be re-armed, which is exactly
+  the recurring friction you wanted to avoid. Also a long-lived connection to budget for
+  (battery, process death).
+- **Mitigation:** grant `WRITE_SECURE_SETTINGS` once during setup, then have the app set
+  `settings put global adb_wifi_enabled 1` on boot and reconnect itself automatically.
+  Prior art: [adb-auto-enable](https://github.com/mouldybread/adb-auto-enable) does exactly
+  this, including self-granting the permission after pairing. Fiddly, but it restores
+  hands-off operation.
+- **Risk:** Google is moving to restrict local/on-device ADB, which would hit both Shizuku
+  and embedded-ADB variants of this path.
+
+### Option C — root
+
+With an unlocked bootloader, remap the scan code in a `.kl` key layout file or handle it in
+a proper system-level handler. Cleanest and most robust, no services at all. Rejected unless
+you're willing to unlock (which wipes the device).
+
+### Recommendation
+
+**Test Option A, fall back to Option B.** Option A preserves the one-time-setup property and
+is a genuinely different configuration from Key Mapper's — the diagnosis in §2 gives good
+reason to expect it behaves differently. Option B is the guaranteed-correct answer if the
+test fails, at the cost of reboot re-arming.
 
 ---
 
-## 3. Setup UX
+## 4. Architecture
 
-```
-1. Explain what will change (Essential Space stops working) + consent
-2. "Enable Developer options → Wireless debugging"  [deep-link to the settings page]
-3. App auto-discovers the pairing port via mDNS
-4. User enters the 6-digit pairing code   ← the only manual input
-5. App runs the command sequence, shows a live log
-6. "Press the Essential Key" → learn scan code
-7. Enable accessibility service (automatic via WRITE_SECURE_SETTINGS)
-8. Done — "you can turn wireless debugging back off"
-```
-
-Android's pairing dialog can't be read programmatically, so step 4 wants split-screen or
-a floating window; the wizard should say so explicitly with a screenshot.
-
----
-
-## 4. Implementation phases
-
-**Phase 1 — Prove the mechanism.** Skeleton app + accessibility service that logs every
-`onKeyEvent` (scanCode, deviceId, action). Disable the two packages *manually* via PC ADB.
-Confirm the key arrives and note its scan code. **Nothing else is worth building until this
-is confirmed on your actual device.**
-
-**Phase 2 — Torch.** `TorchController` + torch callback state tracking. Hardcode the scan
-code from Phase 1. At this point the feature works end to end.
-
-**Phase 3 — Embedded ADB.** Add libadb-android, mDNS discovery, pairing UI, command runner
-with live log. Replaces the manual PC step.
-
-**Phase 4 — Polish.** Learn-key flow, single/double/long binding config, action types
-beyond torch (launch app, media, custom intent), undo/restore screen, setup-health check
-that detects a re-enabled Essential Space.
-
-Suggested stack: Kotlin, Compose, `minSdk 30` (wireless pairing is Android 11+), DataStore.
-
----
-
-## 5. Risks and fallbacks
-
-| Risk | Mitigation |
+| Module | Responsibility |
 |---|---|
-| **Google is moving to restrict local/on-device ADB** (would break Shizuku and libadb-based apps alike) | Keep the ADB layer behind an interface with three backends: embedded ADB, **Shizuku** (if installed), and **manual PC commands** (show copyable text). The remap itself is unaffected once applied — only re-setup would need a PC. |
-| Package names differ on 4a Pro / future Nothing OS | Discover via `pm list packages` instead of hardcoding (§2.2 step 1) |
-| Accessibility *still* doesn't get the key after disabling | Plan B: persistent ADB shell running `getevent -lq` on the input node, parsed by the app. Reads raw evdev below the framework, so it cannot be swallowed — but needs a live ADB connection, so it loses the "one-time" property. Only pursue if Phase 1 fails. |
-| A Nothing OS update re-enables the packages | Health check on launch; offer one-tap re-run of setup |
-| Losing Essential Space | Stated up front in the consent screen; fully reversible |
+| `capture/` | `KeyCapture` interface with two implementations (A: accessibility, B: evdev) |
+| `action/` | Torch controller |
+| `setup/` | One-time ADB/Shizuku setup + health checks |
+| `ui/` | Setup wizard, key-learn screen, binding config |
+
+Keeping capture behind an interface means the Option A → B fallback is a swap, not a
+rewrite.
+
+**Torch:** `CameraManager.setTorchMode` — no permission required. Select the camera with
+`FLASH_INFO_AVAILABLE`, preferring `LENS_FACING_BACK`. Track state via
+`registerTorchCallback` rather than a local boolean, so the toggle stays in sync when the QS
+tile or another app changes the torch.
+
+**Learn-the-key flow:** never hardcode the scan code. A "press the Essential Key now" screen
+captures the next unrecognised event and stores `scanCode` + `deviceId`. Also makes the app
+portable to the 3a, Phone (3), and CMF devices.
+
+**Gesture detection:** we own the raw key, so single / double / long press are detected from
+`ACTION_DOWN`/`ACTION_UP` timing in our own code.
 
 ---
 
-## 6. Undo
+## 5. Phases
 
-```
-pm enable com.nothing.ntessentialspace
-pm enable com.nothing.ntessentialrecorder
-```
+**Phase 0 — the decisive experiment.** Stub app + minimal accessibility service (§3 Option
+A config) that only logs `scanCode`/`deviceId`. Disable Key Mapper. Confirm (a) the key is
+received, (b) Obsidian drag/drop still works. *Everything downstream depends on this result.*
 
-Ship this as a "Restore Essential Key" button, not just documentation. Packages are only
-disabled, never uninstalled — no data is lost.
+**Phase 1 — Torch.** `TorchController` + torch callback state tracking, wired to the scan
+code from Phase 0. Feature complete end to end.
+
+**Phase 2 — Productionise the winning path.** Either polish Option A, or build the Shizuku /
+embedded-ADB evdev reader plus boot re-arm.
+
+**Phase 3 — Polish.** Learn-key UI, single/double/long bindings, more action types, health
+check that detects Essential Space being re-enabled by an OS update, restore button.
+
+Stack: Kotlin, Compose, `minSdk 30`, DataStore.
 
 ---
 
-## 7. Open questions to resolve on-device
+## 6. Open questions
 
-- [ ] Exact package names on the (4a) Pro's Nothing OS build
-- [ ] The Essential Key's `scanCode` and `deviceId`
-- [ ] Whether long-press is fully freed by disabling the recorder, or handled elsewhere
-- [ ] Whether the key still reaches accessibility with the screen off / locked
-      (matters a lot for a flashlight — this is the main use case)
+- [ ] **Does the minimal service avoid the Obsidian collision?** (Phase 0 — gates everything)
+- [ ] Does the key still fire with screen off / locked? Critical for a flashlight button.
+- [ ] The Essential Key's `scanCode`, `deviceId`, and input device node
+- [ ] Whether `adb_wifi_enabled` reliably survives boot on Nothing OS 4 (only if Option B)
 
 ---
 
 ## References
 
-- [z3phydev — How to remap or disable the Essential Key](https://github.com/z3phydev/How-to-remap-or-disable-the-Essential-Key)
-- [Beebom — Nothing Essential Key remapped with ADB](https://beebom.com/nothing-essential-key-user-remaps-button-with-adb/)
-- [Android Authority — Phone (3a) Essential Key remap](https://www.androidauthority.com/nothing-phone-3a-essential-key-remap-3543275/)
+- [Chromium — Accessibility on Android](https://chromium.googlesource.com/chromium/src.git/+/HEAD/docs/accessibility/browser/android.md) (AXModes, lazy init, auto-disable)
+- [AOSP — getevent](https://source.android.com/docs/core/interaction/input/getevent)
+- [Obsidian forum — Android drag and drop does not work](https://forum.obsidian.md/t/android-drag-and-drop-does-not-work-in-outline-bookmarks-file-explorer/97843)
+- [Key Mapper](https://github.com/keymapperorg/KeyMapper)
+- [adb-auto-enable](https://github.com/mouldybread/adb-auto-enable)
 - [libadb-android](https://github.com/MuntashirAkon/libadb-android)
-- [LADB — on-device ADB reference implementation](https://github.com/tytydraco/LADB)
-- [Remap the Essential Key without a PC](https://wreck2053.github.io/essential-key/remap-essential-key-without-pc/)
-- [Kitsumed — Android may restrict on-device ADB](https://kitsumed.github.io/blog/posts/android-may-soon-restrict-on-device-adb/)
+- [z3phydev — remap/disable the Essential Key](https://github.com/z3phydev/How-to-remap-or-disable-the-Essential-Key)
