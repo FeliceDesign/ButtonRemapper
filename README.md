@@ -6,9 +6,10 @@ break drag-and-drop and scrolling in WebView apps the way general-purpose remapp
 
 See [docs/DESIGN.md](docs/DESIGN.md) for why that constraint exists and what it costs.
 
-> **Not yet compiled.** This was written in an environment without access to the Android
-> SDK or Google's Maven repository, so it has never been through a compiler. Expect to fix
-> a few small things on first build.
+> **Compiles and lints clean, but has never run on a device.** Every push builds a debug
+> APK in CI — grab it from the **buttonremapper-debug** artifact on the latest
+> [Actions run](https://github.com/FeliceDesign/ButtonRemapper/actions) if you would rather
+> not build locally. Runtime behaviour, including the WebView test below, is still unverified.
 
 ## Prerequisites
 
