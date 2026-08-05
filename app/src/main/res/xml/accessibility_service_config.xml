@@ -4,7 +4,9 @@
 
     We request key-event filtering and NOTHING else. In particular:
       * canRetrieveWindowContent="false" - we never read the screen
-      * accessibilityEventTypes="typesNone" - we register for no events
+      * accessibilityEventTypes is omitted entirely, which means zero event types.
+        (There is no "typesNone" constant - the attribute is a flags mask and
+        leaving it out is how you ask for nothing.)
       * no flagDefault / flagIncludeNotImportantViews / flagReportViewIds
       * no canRequestTouchExplorationMode, no canPerformGestures
 
@@ -19,7 +21,6 @@
     capabilities here without re-testing drag and drop in a WebView app.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typesNone"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagRequestFilterKeyEvents"
     android:canRequestFilterKeyEvents="true"

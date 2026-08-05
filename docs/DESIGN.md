@@ -8,13 +8,16 @@
 
 ```xml
 android:canRetrieveWindowContent="false"
-android:accessibilityEventTypes="typesNone"
 android:accessibilityFlags="flagRequestFilterKeyEvents"
 android:canRequestFilterKeyEvents="true"
 ```
 
 Nothing else. No `flagDefault`, no `flagIncludeNotImportantViews`, no
 `canRequestTouchExplorationMode`, no `canPerformGestures`.
+
+`accessibilityEventTypes` is deliberately **absent**. It is a flags mask with no
+"none" constant, so omitting it is how a service registers for zero event types —
+writing `typesNone` is a resource-linking error.
 
 ## Why
 
