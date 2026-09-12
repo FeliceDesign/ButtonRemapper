@@ -204,6 +204,12 @@ fun MainScreen() {
                         onResetCycle = {
                             settings.setCycleIndex(gesture, 0)
                             revision++
+                        },
+                        onCheckPoints = {
+                            CalibrationBus.verify(
+                                ScreenPoint.decodeList(spec.arg),
+                                longPress = spec.type == ActionType.LONG_PRESS_POINT
+                            )
                         }
                     )
                 }
@@ -385,7 +391,8 @@ private fun BindingRow(
     appLabel: String?,
     cycleIndex: Int,
     onClick: () -> Unit,
-    onResetCycle: () -> Unit
+    onResetCycle: () -> Unit,
+    onCheckPoints: () -> Unit
 ) {
     val points = if (spec.type.needsPoints) ScreenPoint.decodeList(spec.arg) else emptyList()
 
@@ -425,8 +432,11 @@ private fun BindingRow(
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 modifier = Modifier.padding(top = 4.dp)
             )
-            if (points.size > 1) {
-                TextButton(onClick = onResetCycle) { Text("Reset to step 1") }
+            Row {
+                TextButton(onClick = onCheckPoints) { Text("Check points") }
+                if (points.size > 1) {
+                    TextButton(onClick = onResetCycle) { Text("Reset to step 1") }
+                }
             }
         }
     }

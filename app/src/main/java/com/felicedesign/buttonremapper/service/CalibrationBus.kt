@@ -24,6 +24,8 @@ object CalibrationBus {
         )
 
         fun hideCalibrationOverlay()
+
+        fun showPointMarkers(points: List<ScreenPoint>, longPress: Boolean)
     }
 
     @Volatile
@@ -55,6 +57,16 @@ object CalibrationBus {
     ): Boolean {
         val current = host ?: return false
         current.showCalibrationOverlay(prompt, allowMore, cancelLabel, onResult)
+        return true
+    }
+
+    /**
+     * Marks the saved points on screen so they can be compared against the controls
+     * they are meant to hit, with a button to fire each one for real.
+     */
+    fun verify(points: List<ScreenPoint>, longPress: Boolean): Boolean {
+        val current = host ?: return false
+        current.showPointMarkers(points, longPress)
         return true
     }
 

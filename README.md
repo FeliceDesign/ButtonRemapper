@@ -154,7 +154,25 @@ Two things to know:
   almost the same place in both, but photo's `1` sits roughly where video's `0.6` does.
   Calibrate in the orientation *and* mode you will shoot in.
 - **Tap timings are adjustable** under Timing once a tap action is bound, for targets that
-  ignore a touch that is too brief.
+  ignore a touch that is too brief. Some shutter buttons want noticeably longer than the
+  60 ms default.
+
+### When a tap does nothing
+
+Press **Check points** on the binding. Numbered markers appear on every saved coordinate,
+so you can hold them up against the control and see whether the dot is actually on the
+button. Pressing a number fires a real tap there and reports whether the system
+*delivered* it or *cancelled* it — two completely different bugs:
+
+- **Dot is off the control** → re-calibrate. Calibrate in the same orientation, camera
+  mode and zoom state the tap will fire in.
+- **Delivered, nothing happened** → the app got the touch and ignored it. Try a longer
+  synthesised tap first.
+- **Cancelled** → something interrupted the gesture before it landed.
+
+The overlay pulls itself off screen before a test tap. A non-touchable overlay still marks
+touches beneath it as obscured, and an app calling `setFilterTouchesWhenObscured` would
+reject the tap and give a false negative.
 
 This is the app's only capability beyond key filtering (`canPerformGestures`). It should not
 affect WebView, but **re-run the Obsidian drag-and-drop test below** after installing this

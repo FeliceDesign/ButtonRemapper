@@ -58,6 +58,11 @@ class RemapAccessibilityService : AccessibilityService(), CalibrationBus.Host {
 
     override fun hideCalibrationOverlay() = calibration.hide()
 
+    override fun showPointMarkers(points: List<ScreenPoint>, longPress: Boolean) {
+        val duration = if (longPress) settings.tapLongPressMs else settings.tapMs
+        calibration.showMarkers(points) { point -> runner.testTap(point, duration.toLong()) }
+    }
+
     override fun onKeyEvent(event: KeyEvent): Boolean {
         // Learning mode: capture the next key press and swallow everything so the key
         // being learned cannot fire its old behaviour mid-capture.

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Path
 import android.media.AudioManager
 import android.util.Log
+import android.widget.Toast
 import android.view.KeyEvent
 import com.felicedesign.buttonremapper.data.ActionSpec
 import com.felicedesign.buttonremapper.data.ActionType
@@ -64,6 +65,21 @@ class ActionRunner(
         }
     }
 
+    /**
+     * Fires a tap from the verification overlay and says out loud what happened.
+     *
+     * `dispatchGesture` returning true only means the gesture was accepted for
+     * dispatch. The result callback is the part that distinguishes "delivered, and the
+     * app ignored it" from "cancelled before it landed" - which are completely
+     * different bugs and indistinguishable without this.
+     */
+    fun testTap(point: ScreenPoint, durationMs: Long) {
+        tapAt(point, durationMs) { completed ->
+            val verdict = if (completed) "delivered" else "CANCELLED"
+            Toast.makeText(service, "Tap at $point: $verdict", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     fun release() = torch.release()
 
     private fun global(action: Int) {
@@ -111,7 +127,11 @@ class ActionRunner(
      * is gated behind the signature-level INJECT_EVENTS. Accessibility gesture dispatch
      * has its own privileged channel, which is why this works at all.
      */
-    private fun tapAt(point: ScreenPoint?, durationMs: Long) {
+    private fun tapAt(
+        point: ScreenPoint?,
+        durationMs: Long,
+        onResult: ((Boolean) -> Unit)? = null
+    ) {
         if (point == null) {
             Log.w(TAG, "Tap action has no calibrated point")
             return
@@ -125,12 +145,21 @@ class ActionRunner(
             lineTo(point.x + 1f, point.y + 1f)
         }
         val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
+        val callback = onResult?.let {
+            object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gesture: GestureDescription?) = it(true)
+                override fun onCancelled(gesture: GestureDescription?) = it(false)
+            }
+        }
         val dispatched = service.dispatchGesture(
             GestureDescription.Builder().addStroke(stroke).build(),
-            null,
+            callback,
             null
         )
-        if (!dispatched) Log.w(TAG, "Gesture dispatch refused at $point")
+        if (!dispatched) {
+            Log.w(TAG, "Gesture dispatch refused at $point")
+            onResult?.invoke(false)
+        }
     }
 
     private fun launchApp(packageName: String?) {
