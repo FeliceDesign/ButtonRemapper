@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import com.felicedesign.buttonremapper.action.ActionRunner
+import com.felicedesign.buttonremapper.data.ScreenPoint
 import com.felicedesign.buttonremapper.data.SettingsStore
 import com.felicedesign.buttonremapper.key.KeyGestureDetector
 
@@ -16,11 +17,12 @@ import com.felicedesign.buttonremapper.key.KeyGestureDetector
  * res/xml/accessibility_service_config.xml). `onAccessibilityEvent` is therefore never
  * called - only `onKeyEvent` is.
  */
-class RemapAccessibilityService : AccessibilityService() {
+class RemapAccessibilityService : AccessibilityService(), CalibrationBus.Host {
 
     private lateinit var settings: SettingsStore
     private lateinit var runner: ActionRunner
     private lateinit var detector: KeyGestureDetector
+    private lateinit var calibration: CalibrationOverlay
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -37,8 +39,20 @@ class RemapAccessibilityService : AccessibilityService() {
             },
             onGesture = { gesture -> runner.run(settings.action(gesture)) }
         )
+        calibration = CalibrationOverlay(this)
+        CalibrationBus.registerHost(this)
         isRunning = true
     }
+
+    // --- CalibrationBus.Host ---------------------------------------------------
+    //
+    // The crosshair has to outlive the activity that asked for it, because the whole
+    // point is to aim it at someone else's app. Hosting it here is what makes that work.
+
+    override fun showCalibrationOverlay(onResult: (ScreenPoint?) -> Unit) =
+        calibration.show(onResult)
+
+    override fun hideCalibrationOverlay() = calibration.hide()
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
         // Learning mode: capture the next key press and swallow everything so the key
@@ -95,6 +109,8 @@ class RemapAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         isRunning = false
+        CalibrationBus.registerHost(null)
+        if (::calibration.isInitialized) calibration.hide()
         if (::detector.isInitialized) detector.reset()
         if (::runner.isInitialized) runner.release()
         return super.onUnbind(intent)

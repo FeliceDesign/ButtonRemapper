@@ -1,12 +1,15 @@
 package com.felicedesign.buttonremapper.action
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Path
 import android.media.AudioManager
 import android.util.Log
 import android.view.KeyEvent
 import com.felicedesign.buttonremapper.data.ActionSpec
 import com.felicedesign.buttonremapper.data.ActionType
+import com.felicedesign.buttonremapper.data.ScreenPoint
 
 /**
  * Executes a bound action.
@@ -14,6 +17,8 @@ import com.felicedesign.buttonremapper.data.ActionType
  * Note what is *not* here: nothing inspects the screen, queries the focused app, or
  * reads the view hierarchy. `performGlobalAction` works without the
  * `canRetrieveWindowContent` capability, which is what lets the service stay minimal.
+ * `dispatchGesture` is the same deal - it fires a touch at a coordinate without ever
+ * asking what is drawn there.
  */
 class ActionRunner(private val service: AccessibilityService) {
 
@@ -41,6 +46,9 @@ class ActionRunner(private val service: AccessibilityService) {
             ActionType.NOTIFICATIONS -> global(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
             ActionType.QUICK_SETTINGS -> global(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
 
+            ActionType.TAP_POINT -> tap(spec.arg, TAP_MS)
+            ActionType.LONG_PRESS_POINT -> tap(spec.arg, LONG_PRESS_MS)
+
             ActionType.POWER_DIALOG -> global(AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
             ActionType.LOCK_SCREEN -> global(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
             ActionType.SCREENSHOT -> global(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
@@ -67,6 +75,37 @@ class ActionRunner(private val service: AccessibilityService) {
         )
     }
 
+    /**
+     * Synthesises a touch at an absolute display coordinate.
+     *
+     * This is the only input-injection route Android grants a normal app: everything
+     * that fakes a *key* press (InputManager.injectInputEvent, uinput, Instrumentation)
+     * is gated behind the signature-level INJECT_EVENTS. Accessibility gesture dispatch
+     * has its own privileged channel, which is why this works at all.
+     */
+    private fun tap(arg: String?, durationMs: Long) {
+        val point = ScreenPoint.decode(arg)
+        if (point == null) {
+            Log.w(TAG, "Tap action has no calibrated point")
+            return
+        }
+
+        // StrokeDescription rejects an empty path, and moveTo alone counts as empty, so
+        // the stroke travels one pixel. That is well under touch slop, so the target
+        // still sees a clean tap rather than a drag.
+        val path = Path().apply {
+            moveTo(point.x.toFloat(), point.y.toFloat())
+            lineTo(point.x + 1f, point.y + 1f)
+        }
+        val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
+        val dispatched = service.dispatchGesture(
+            GestureDescription.Builder().addStroke(stroke).build(),
+            null,
+            null
+        )
+        if (!dispatched) Log.w(TAG, "Gesture dispatch refused at $point")
+    }
+
     private fun launchApp(packageName: String?) {
         if (packageName.isNullOrEmpty()) return
         val intent: Intent? = service.packageManager.getLaunchIntentForPackage(packageName)
@@ -87,5 +126,11 @@ class ActionRunner(private val service: AccessibilityService) {
 
     private companion object {
         const val TAG = "ActionRunner"
+
+        /** Long enough to register everywhere, short enough not to read as a hold. */
+        const val TAP_MS = 60L
+
+        /** Comfortably past the platform long-press threshold (500 ms). */
+        const val LONG_PRESS_MS = 700L
     }
 }

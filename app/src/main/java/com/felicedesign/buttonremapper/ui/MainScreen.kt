@@ -51,7 +51,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.felicedesign.buttonremapper.data.ActionSpec
 import com.felicedesign.buttonremapper.data.ActionType
 import com.felicedesign.buttonremapper.data.Gesture
+import com.felicedesign.buttonremapper.data.ScreenPoint
 import com.felicedesign.buttonremapper.data.SettingsStore
+import com.felicedesign.buttonremapper.service.CalibrationBus
 import com.felicedesign.buttonremapper.service.KeyCaptureBus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -114,6 +116,7 @@ fun MainScreen() {
     var learning by remember { mutableStateOf(false) }
     var pickerFor by remember { mutableStateOf<Gesture?>(null) }
     var appPickerFor by remember { mutableStateOf<Gesture?>(null) }
+    var calibrating by remember { mutableStateOf<Pair<Gesture, ActionType>?>(null) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("ButtonRemapper") }) }) { padding ->
         Column(
@@ -180,7 +183,9 @@ fun MainScreen() {
                     BindingRow(
                         gesture = gesture,
                         spec = spec,
-                        appLabel = spec.arg?.let { appLabel(context, it) },
+                        appLabel = spec.arg
+                            ?.takeIf { spec.type.needsApp }
+                            ?.let { appLabel(context, it) },
                         onClick = { pickerFor = gesture }
                     )
                 }
@@ -255,14 +260,28 @@ fun MainScreen() {
             current = ui.bindings[gesture]?.type ?: ActionType.NONE,
             onPick = { type ->
                 pickerFor = null
-                if (type.needsApp) {
-                    appPickerFor = gesture
-                } else {
-                    settings.setAction(gesture, ActionSpec(type))
-                    revision++
+                when {
+                    type.needsApp -> appPickerFor = gesture
+                    type.needsPoint -> calibrating = gesture to type
+                    else -> {
+                        settings.setAction(gesture, ActionSpec(type))
+                        revision++
+                    }
                 }
             },
             onDismiss = { pickerFor = null }
+        )
+    }
+
+    calibrating?.let { (gesture, type) ->
+        CalibrateDialog(
+            serviceEnabled = ui.serviceEnabled,
+            onPicked = { point ->
+                settings.setAction(gesture, ActionSpec(type, point.encode()))
+                calibrating = null
+                revision++
+            },
+            onDismiss = { calibrating = null }
         )
     }
 
@@ -332,10 +351,14 @@ private fun BindingRow(
     ) {
         Text(gesture.label, style = MaterialTheme.typography.bodyLarge)
         Text(
-            if (spec.type == ActionType.LAUNCH_APP) {
-                appLabel ?: spec.arg ?: spec.type.label
-            } else {
-                spec.type.label
+            when {
+                spec.type.needsApp -> appLabel ?: spec.arg ?: spec.type.label
+                spec.type.needsPoint ->
+                    ScreenPoint.decode(spec.arg)
+                        ?.let { "${spec.type.label}  ($it)" }
+                        ?: "${spec.type.label} — not calibrated"
+
+                else -> spec.type.label
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.primary
@@ -382,6 +405,58 @@ private fun LearnKeyDialog(
                 } else {
                     "Enable the accessibility service first — without it no key events reach the app."
                 }
+            )
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * Hands the crosshair to the accessibility service and waits.
+ *
+ * The dialog deliberately stays composed while you leave the app - Compose keeps the
+ * composition alive across a stop, so the callback still lands when you come back from
+ * the camera. [settings] is written from that callback rather than from a resume, so
+ * the binding is saved even if this activity never regains focus.
+ */
+@Composable
+private fun CalibrateDialog(
+    serviceEnabled: Boolean,
+    onPicked: (ScreenPoint) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var started by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        started = CalibrationBus.start { point ->
+            if (point != null) onPicked(point) else onDismiss()
+        }
+        onDispose { CalibrationBus.cancel() }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pick a spot") },
+        text = {
+            Text(
+                when {
+                    !serviceEnabled ->
+                        "Enable the accessibility service first — it is what hosts the " +
+                            "crosshair and what will later fire the tap."
+
+                    !started ->
+                        "The accessibility service is not connected right now, so there " +
+                            "is nothing to draw the crosshair. Try toggling it off and on."
+
+                    else ->
+                        "A crosshair is now floating on top of everything. Leave " +
+                            "ButtonRemapper, open your camera, drag the crosshair onto the " +
+                            "shutter and press Save.\n\n" +
+                            "Calibrate in the orientation you will actually shoot in — the " +
+                            "point is an absolute screen coordinate, so a shutter that moves " +
+                            "in landscape needs its own binding."
+                },
+                style = MaterialTheme.typography.bodyMedium
             )
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

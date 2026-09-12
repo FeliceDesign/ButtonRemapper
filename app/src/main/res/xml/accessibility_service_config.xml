@@ -8,7 +8,7 @@
         (There is no "typesNone" constant - the attribute is a flags mask and
         leaving it out is how you ask for nothing.)
       * no flagDefault / flagIncludeNotImportantViews / flagReportViewIds
-      * no canRequestTouchExplorationMode, no canPerformGestures
+      * no canRequestTouchExplorationMode
 
     This matters. Chromium/WebView initialises its accessibility engine lazily and
     picks an AXMode based on which services are running and what they ask for. A
@@ -19,10 +19,19 @@
 
     Requesting no content and no events should leave that engine asleep. Do not add
     capabilities here without re-testing drag and drop in a WebView app.
+
+    THE ONE EXCEPTION: canPerformGestures="true".
+
+    It is here so the "Tap a spot on screen" action can synthesise a touch - the only
+    input-injection path Android opens to a normal app (everything else needs the
+    signature-level INJECT_EVENTS). It is a *gesture dispatch* capability, not a
+    content-retrieval one, so it should not move Chromium's AXMode. "Should not" is
+    not "does not": see docs/DESIGN.md, and re-run the Obsidian drag test.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagRequestFilterKeyEvents"
+    android:canPerformGestures="true"
     android:canRequestFilterKeyEvents="true"
     android:canRetrieveWindowContent="false"
     android:description="@string/service_description"

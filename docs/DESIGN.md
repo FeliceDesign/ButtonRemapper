@@ -10,10 +10,15 @@
 android:canRetrieveWindowContent="false"
 android:accessibilityFlags="flagRequestFilterKeyEvents"
 android:canRequestFilterKeyEvents="true"
+android:canPerformGestures="true"
 ```
 
 Nothing else. No `flagDefault`, no `flagIncludeNotImportantViews`, no
-`canRequestTouchExplorationMode`, no `canPerformGestures`.
+`canRequestTouchExplorationMode`.
+
+`canPerformGestures` is a later addition and the only capability beyond key filtering —
+see "The second exception" below for why it is believed safe and what still needs
+testing.
 
 `accessibilityEventTypes` is deliberately **absent**. It is a flags mask with no
 "none" constant, so omitting it is how a service registers for zero event types —
@@ -65,6 +70,51 @@ Android has **no** background-activity-launch exemption for accessibility servic
 documented, user-grantable exemption is `SYSTEM_ALERT_WINDOW` ("Display over other apps"),
 so that permission is requested — but only when a "Launch app" action is actually bound.
 It has nothing to do with accessibility and does not affect WebView.
+
+## The second exception: `canPerformGestures`
+
+### Why it is here
+
+Underwater housings only expose one button, and it lands on the Essential Key. The goal
+was to make that key fire the camera shutter. Every route to faking a *key* press is
+closed to a normal app:
+
+| Mechanism | Why not |
+|---|---|
+| `InputManager.injectInputEvent()` | `INJECT_EVENTS`, `protectionLevel="signature"` |
+| `Instrumentation.sendKeyDownUpSync()` | Wraps the same call; `SecurityException` cross-app |
+| `UiAutomation.injectInputEvent()` | Instrumentation tests only |
+| IME `InputConnection.sendKeyEvent()` | Reaches the focused *text field* only |
+| `AudioManager.dispatchMediaKeyEvent()` | Filtered by `KeyEvent.isMediaSessionKey()`; volume is not one |
+| `GLOBAL_ACTION_KEYCODE_HEADSETHOOK` | Routed to the MediaSession, not the focused window |
+| `BluetoothHidDevice` | Targets a remote host; cannot address its own device |
+| `/dev/uinput` | SELinux denies the app domain |
+| `.kl` keylayout remap | The correct answer, needs root |
+| Shizuku / embedded ADB | Works, but shell privilege and re-arming after every reboot |
+
+Accessibility gesture dispatch is the **only** input-injection channel Android opens to
+an unprivileged app. It injects touch, not keys — so `TAP_POINT` taps a coordinate the
+user calibrated rather than pressing a volume key.
+
+### Why it should not wake WebView
+
+The trigger documented above is *"a running service asks for window content"*.
+`canPerformGestures` is a dispatch capability: it grants an output path, and causes no
+call to `getAccessibilityNodeProvider`. `canRetrieveWindowContent` stays `false` and no
+event types are registered, so Chromium's AXMode inputs are unchanged.
+
+**This is reasoning, not a measurement.** Re-run the Obsidian drag test.
+
+### What it does not do
+
+`TAP_POINT` cannot know what is under the coordinate — that would need window content,
+which is the whole thing we are refusing. It fires wherever you happen to be. Calibration
+is likewise blind: the user aims a crosshair, the app never reads the screen.
+
+The crosshair itself uses `TYPE_ACCESSIBILITY_OVERLAY`, which is granted to accessibility
+services directly, so calibration needs no `SYSTEM_ALERT_WINDOW`. It is hosted by the
+accessibility service rather than by an activity because it has to stay up while the user
+switches to the app they are aiming at.
 
 ## Before adding a capability
 

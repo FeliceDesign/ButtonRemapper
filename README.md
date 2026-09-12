@@ -94,7 +94,35 @@ If drag-and-drop works, the approach holds. If it does not, the fallback is a sh
 ## Actions
 
 Torch · launch app · play/pause · next · previous · volume up/down/mute · back · home ·
-recents · notification shade · quick settings · power menu · lock screen · screenshot.
+recents · notification shade · quick settings · power menu · lock screen · screenshot ·
+**tap a spot on screen** · **long-press a spot on screen**.
 
 All of them are stateless system operations — none needs to know what is on screen. That is
 what keeps the service minimal.
+
+## Tap a spot on screen
+
+Fires a touch at a coordinate you calibrate. It exists because no unprivileged app can fake
+a *key* press (`INJECT_EVENTS` is signature-level), so "make the Essential Key act as the
+camera shutter" is impossible — but tapping the shutter *button* is not. The original use
+case is an underwater housing whose only usable button sits over the Essential Key.
+
+**To calibrate:** bind the action, and a crosshair appears on top of everything. Leave
+ButtonRemapper, open the app you want to control, drag the crosshair onto the button, press
+Save. Touches outside the crosshair and the panel pass straight through, so the app
+underneath stays usable while you aim.
+
+Each gesture stores its own point, so single press can hit the shutter while double press
+hits the video-mode tab.
+
+Two things to know:
+
+- **It taps blind.** Knowing whether your camera is actually in front would require window
+  content, which is exactly what this app refuses to request (see `docs/DESIGN.md`). Bound
+  to a gesture, it fires wherever you are — rebind it when you are done.
+- **Coordinates are absolute**, so a point calibrated in portrait is wrong in landscape.
+  Calibrate in the orientation you will shoot in.
+
+This is the app's only capability beyond key filtering (`canPerformGestures`). It should not
+affect WebView, but **re-run the Obsidian drag-and-drop test below** after installing this
+version.
