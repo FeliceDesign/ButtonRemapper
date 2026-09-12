@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,6 +25,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -53,6 +56,7 @@ import com.felicedesign.buttonremapper.data.ActionSpec
 import com.felicedesign.buttonremapper.data.ActionType
 import com.felicedesign.buttonremapper.data.Gesture
 import com.felicedesign.buttonremapper.data.PointNeed
+import com.felicedesign.buttonremapper.data.Preset
 import com.felicedesign.buttonremapper.data.ScreenPoint
 import com.felicedesign.buttonremapper.data.SettingsStore
 import com.felicedesign.buttonremapper.service.CalibrationBus
@@ -66,6 +70,8 @@ import kotlinx.coroutines.withContext
  * (which catches permission changes made in system settings).
  */
 private data class UiSnapshot(
+    val presets: List<Preset>,
+    val activePresetId: Int,
     val serviceEnabled: Boolean,
     val canOverlay: Boolean,
     val keyLearned: Boolean,
@@ -93,6 +99,8 @@ private data class UiSnapshot(
 }
 
 private fun snapshot(context: Context, settings: SettingsStore) = UiSnapshot(
+    presets = settings.presets,
+    activePresetId = settings.activePresetId,
     serviceEnabled = isAccessibilityServiceEnabled(context),
     canOverlay = Settings.canDrawOverlays(context),
     keyLearned = settings.isKeyLearned,
@@ -131,6 +139,7 @@ fun MainScreen() {
     var appPickerFor by remember { mutableStateOf<Gesture?>(null) }
     var calibrating by remember { mutableStateOf<Pair<Gesture, ActionType>?>(null) }
     var editingPoints by remember { mutableStateOf<Gesture?>(null) }
+    var namingPreset by remember { mutableStateOf<PresetPrompt?>(null) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("ButtonRemapper") }) }) { padding ->
         Column(
@@ -141,6 +150,16 @@ fun MainScreen() {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            PresetCard(
+                presets = ui.presets,
+                activeId = ui.activePresetId,
+                onSelect = { settings.activePresetId = it; revision++ },
+                onNew = { namingPreset = PresetPrompt.New },
+                onDuplicate = { namingPreset = PresetPrompt.Duplicate },
+                onRename = { namingPreset = PresetPrompt.Rename },
+                onDelete = { settings.deletePreset(ui.activePresetId); revision++ }
+            )
+
             SetupCard(
                 title = "Accessibility service",
                 body = if (ui.serviceEnabled) {
@@ -337,6 +356,33 @@ fun MainScreen() {
         )
     }
 
+    namingPreset?.let { prompt ->
+        val active = ui.presets.firstOrNull { it.id == ui.activePresetId }
+        PresetNameDialog(
+            prompt = prompt,
+            initial = when (prompt) {
+                PresetPrompt.Rename -> active?.name.orEmpty()
+                PresetPrompt.Duplicate -> "${active?.name.orEmpty()} copy"
+                PresetPrompt.New -> ""
+            },
+            onConfirm = { name ->
+                when (prompt) {
+                    PresetPrompt.New ->
+                        settings.activePresetId = settings.createPreset(name)
+
+                    PresetPrompt.Duplicate ->
+                        settings.activePresetId =
+                            settings.createPreset(name, copyFrom = ui.activePresetId)
+
+                    PresetPrompt.Rename -> settings.renamePreset(ui.activePresetId, name)
+                }
+                namingPreset = null
+                revision++
+            },
+            onDismiss = { namingPreset = null }
+        )
+    }
+
     editingPoints?.let { gesture ->
         val spec = ui.bindings[gesture] ?: ActionSpec()
         PointEditorDialog(
@@ -364,6 +410,107 @@ fun MainScreen() {
             onDismiss = { appPickerFor = null }
         )
     }
+}
+
+/** Which question the name dialog is asking. */
+private enum class PresetPrompt(val title: String, val confirm: String) {
+    New("New preset", "Create"),
+    Duplicate("Duplicate preset", "Duplicate"),
+    Rename("Rename preset", "Rename")
+}
+
+/**
+ * Preset switching, kept at the top because it changes the meaning of everything below
+ * it.
+ *
+ * Switching writes a single int. Every read in [SettingsStore] resolves the active
+ * preset first, so the accessibility service picks up the new mapping on the very next
+ * press with nothing to notify or restart.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PresetCard(
+    presets: List<Preset>,
+    activeId: Int,
+    onSelect: (Int) -> Unit,
+    onNew: () -> Unit,
+    onDuplicate: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Preset", style = MaterialTheme.typography.titleMedium)
+
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                presets.forEach { preset ->
+                    FilterChip(
+                        selected = preset.id == activeId,
+                        onClick = { onSelect(preset.id) },
+                        label = { Text(preset.name) }
+                    )
+                }
+            }
+
+            Row(Modifier.horizontalScroll(rememberScrollState())) {
+                TextButton(onClick = onNew) { Text("New") }
+                TextButton(onClick = onDuplicate) { Text("Duplicate") }
+                TextButton(onClick = onRename) { Text("Rename") }
+                if (presets.size > 1) {
+                    TextButton(onClick = onDelete) { Text("Delete") }
+                }
+            }
+
+            Text(
+                "Bindings, calibrated points and timings all belong to the preset. " +
+                    "The learned key does not — that is the hardware, and it is shared.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun PresetNameDialog(
+    prompt: PresetPrompt,
+    initial: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(initial) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(prompt.title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Name") }
+                )
+                if (prompt == PresetPrompt.Duplicate) {
+                    Text(
+                        "Copies every binding, point and timing from the current preset, " +
+                            "so a variant does not mean re-aiming everything.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(name.trim()) },
+                enabled = name.isNotBlank()
+            ) { Text(prompt.confirm) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable

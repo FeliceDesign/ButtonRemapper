@@ -1,5 +1,12 @@
 package com.felicedesign.buttonremapper.data
 
+/**
+ * A named set of bindings and timings.
+ *
+ * The learned key is not part of one: a scan code identifies hardware, not a mapping.
+ */
+data class Preset(val id: Int, val name: String)
+
 /** The ways the key can be pressed. */
 enum class Gesture(val label: String, val key: String) {
     SINGLE("Single press", "single"),

@@ -100,6 +100,26 @@ recents · notification shade · quick settings · power menu · lock screen · 
 All of them are stateless system operations — none needs to know what is on screen. That is
 what keeps the service minimal.
 
+## Presets
+
+Named sets of bindings you switch between — a daily mapping and a diving mapping, say.
+Create, duplicate, rename and delete them from the card at the top of the screen.
+
+**Bindings, calibrated points, cycle positions and all four timings live in the preset.
+The learned key does not** — a scan code identifies hardware, not a mapping, and re-learning
+the Essential Key on every switch would be absurd.
+
+Switching costs one integer write. Every read resolves the active preset first, so the
+accessibility service picks up the new mapping on the very next press: nothing to notify,
+restart or invalidate.
+
+**Duplicate** clones every binding, point and timing, which is how you build a variant of a
+working setup without re-aiming anything. Cycle positions are per preset too, so switching
+away and back resumes where that preset was.
+
+Upgrading from a version without presets moves your existing settings into a preset named
+*Default* rather than stranding them.
+
 ## Gestures
 
 Single press · double press · long press · **press, then hold** ("tap taaaap").
