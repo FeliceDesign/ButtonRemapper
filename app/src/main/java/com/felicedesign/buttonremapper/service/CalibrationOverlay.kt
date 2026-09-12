@@ -37,10 +37,15 @@ class CalibrationOverlay(private val service: AccessibilityService) {
     private var crosshair: CrosshairView? = null
     private var crosshairParams: WindowManager.LayoutParams? = null
     private var panel: View? = null
-    private var listener: ((ScreenPoint?) -> Unit)? = null
+    private var listener: ((ScreenPoint?, Boolean) -> Unit)? = null
 
-    fun show(onResult: (ScreenPoint?) -> Unit) {
-        if (crosshair != null) hide(notifyWith = null)
+    fun show(
+        prompt: String,
+        allowMore: Boolean,
+        cancelLabel: String,
+        onResult: (ScreenPoint?, Boolean) -> Unit
+    ) {
+        if (crosshair != null) hide()
         listener = onResult
 
         val size = dp(88)
@@ -77,10 +82,13 @@ class CalibrationOverlay(private val service: AccessibilityService) {
         crosshair = view
         crosshairParams = params
         windowManager.addView(view, params)
-        windowManager.addView(buildPanel().also { panel = it }, panelParams())
+        windowManager.addView(
+            buildPanel(prompt, allowMore, cancelLabel).also { panel = it },
+            panelParams()
+        )
     }
 
-    fun hide(notifyWith: ScreenPoint? = null) {
+    fun hide(notifyWith: ScreenPoint? = null, more: Boolean = false) {
         crosshair?.let { runCatching { windowManager.removeView(it) } }
         panel?.let { runCatching { windowManager.removeView(it) } }
         crosshair = null
@@ -89,7 +97,7 @@ class CalibrationOverlay(private val service: AccessibilityService) {
 
         val callback = listener
         listener = null
-        callback?.invoke(notifyWith)
+        callback?.invoke(notifyWith, more)
     }
 
     /** Centre of the crosshair in display coordinates - what the tap will actually hit. */
@@ -99,7 +107,11 @@ class CalibrationOverlay(private val service: AccessibilityService) {
         return ScreenPoint(params.x + size / 2, params.y + size / 2)
     }
 
-    private fun buildPanel(): View = LinearLayout(service).apply {
+    private fun buildPanel(
+        prompt: String,
+        allowMore: Boolean,
+        cancelLabel: String
+    ): View = LinearLayout(service).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(20), dp(16), dp(20), dp(16))
         background = GradientDrawable().apply {
@@ -108,8 +120,7 @@ class CalibrationOverlay(private val service: AccessibilityService) {
         }
 
         addView(TextView(service).apply {
-            text = "Open the app you want to control, drag the crosshair onto the " +
-                "button, then Save. Everything outside the crosshair still works."
+            text = prompt
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         })
@@ -118,14 +129,21 @@ class CalibrationOverlay(private val service: AccessibilityService) {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
             addView(Button(service).apply {
-                text = "Cancel"
+                text = cancelLabel
                 setTextColor(Color.WHITE)
-                setOnClickListener { hide(notifyWith = null) }
+                setOnClickListener { hide() }
             })
+            if (allowMore) {
+                addView(Button(service).apply {
+                    text = "Save + add"
+                    setTextColor(Color.WHITE)
+                    setOnClickListener { hide(notifyWith = currentPoint(), more = true) }
+                })
+            }
             addView(Button(service).apply {
-                text = "Save"
+                text = if (allowMore) "Save + done" else "Save"
                 setTextColor(Color.WHITE)
-                setOnClickListener { hide(notifyWith = currentPoint()) }
+                setOnClickListener { hide(notifyWith = currentPoint(), more = false) }
             })
         })
     }

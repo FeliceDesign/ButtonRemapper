@@ -16,7 +16,13 @@ object CalibrationBus {
 
     /** Implemented by the accessibility service. */
     interface Host {
-        fun showCalibrationOverlay(onResult: (ScreenPoint?) -> Unit)
+        fun showCalibrationOverlay(
+            prompt: String,
+            allowMore: Boolean,
+            cancelLabel: String,
+            onResult: (ScreenPoint?, Boolean) -> Unit
+        )
+
         fun hideCalibrationOverlay()
     }
 
@@ -32,12 +38,23 @@ object CalibrationBus {
     }
 
     /**
-     * Puts the crosshair on screen. [onResult] gets the chosen point, or null if the
-     * calibration was cancelled from either side.
+     * Puts the crosshair on screen.
+     *
+     * [prompt] is shown in the floating panel, so a multi-point calibration can say
+     * which point is being aimed. [allowMore] adds a second save button for "save this
+     * one and keep going", which is how a cycle collects an arbitrary number of points.
+     *
+     * [onResult] gets the chosen point (or null if cancelled from either side) and
+     * whether the user asked to add another.
      */
-    fun start(onResult: (ScreenPoint?) -> Unit): Boolean {
+    fun start(
+        prompt: String,
+        allowMore: Boolean = false,
+        cancelLabel: String = "Cancel",
+        onResult: (ScreenPoint?, Boolean) -> Unit
+    ): Boolean {
         val current = host ?: return false
-        current.showCalibrationOverlay(onResult)
+        current.showCalibrationOverlay(prompt, allowMore, cancelLabel, onResult)
         return true
     }
 

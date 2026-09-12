@@ -95,10 +95,23 @@ If drag-and-drop works, the approach holds. If it does not, the fallback is a sh
 
 Torch · launch app · play/pause · next · previous · volume up/down/mute · back · home ·
 recents · notification shade · quick settings · power menu · lock screen · screenshot ·
-**tap a spot on screen** · **long-press a spot on screen**.
+**tap a spot** · **long-press a spot** · **cycle through spots**.
 
 All of them are stateless system operations — none needs to know what is on screen. That is
 what keeps the service minimal.
+
+## Gestures
+
+Single press · double press · long press · **press, then hold** ("tap taaaap").
+
+Press-then-hold is a fourth gesture that costs nothing. The second key-down of a double
+press already starts the long-press timer, so the gesture is just "that timer fired while
+the press count was 2" — three lines in `KeyGestureDetector`. A triple press would have
+been the obvious way to buy a fourth slot and the wrong one: it forces *every* single
+press to wait out two double-press windows before it can be ruled out.
+
+Single presses still fire instantly whenever nothing is bound to a double press **or** a
+press-then-hold — both start with a tap and a release, so both need the window.
 
 ## Tap a spot on screen
 
@@ -112,16 +125,36 @@ ButtonRemapper, open the app you want to control, drag the crosshair onto the bu
 Save. Touches outside the crosshair and the panel pass straight through, so the app
 underneath stays usable while you aim.
 
-Each gesture stores its own point, so single press can hit the shutter while double press
+Each gesture stores its own points, so single press can hit the shutter while double press
 hits the video-mode tab.
+
+### Cycle through spots
+
+One binding, several points, tapped in turn. Two points make a toggle (1× ⇄ 3.5×, photo ⇄
+video); more make a carousel. This is what keeps a five-item wishlist inside four gesture
+slots — you do not need separate "zoom in" and "zoom out" bindings for something that
+strictly alternates.
+
+**Calibrate each step from the state it fires in.** Aim at `3.5` while you are at 1×, then
+switch to 3.5× and aim at `1`. Camera chip rows re-flow around the selected item, so each
+point gets measured in the layout it will actually meet.
+
+It counts rather than looks — seeing which zoom is selected would need window content. So
+changing the setting by hand puts the cycle out of phase until the next press catches up.
+The binding row marks the next step with `▸` and offers **Reset to step 1**.
 
 Two things to know:
 
 - **It taps blind.** Knowing whether your camera is actually in front would require window
   content, which is exactly what this app refuses to request (see `docs/DESIGN.md`). Bound
   to a gesture, it fires wherever you are — rebind it when you are done.
-- **Coordinates are absolute**, so a point calibrated in portrait is wrong in landscape.
-  Calibrate in the orientation you will shoot in.
+- **Coordinates are absolute**, so a point calibrated in portrait is wrong in landscape —
+  and a point calibrated in photo mode may be wrong in video mode. On the Nothing camera
+  the photo chip row is `0.6 1 2 3.5 7` and the video row is `0.6 1 3.5`: `3.5` lands in
+  almost the same place in both, but photo's `1` sits roughly where video's `0.6` does.
+  Calibrate in the orientation *and* mode you will shoot in.
+- **Tap timings are adjustable** under Timing once a tap action is bound, for targets that
+  ignore a touch that is too brief.
 
 This is the app's only capability beyond key filtering (`canPerformGestures`). It should not
 affect WebView, but **re-run the Obsidian drag-and-drop test below** after installing this

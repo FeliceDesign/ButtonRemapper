@@ -37,6 +37,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,6 +52,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.felicedesign.buttonremapper.data.ActionSpec
 import com.felicedesign.buttonremapper.data.ActionType
 import com.felicedesign.buttonremapper.data.Gesture
+import com.felicedesign.buttonremapper.data.PointNeed
 import com.felicedesign.buttonremapper.data.ScreenPoint
 import com.felicedesign.buttonremapper.data.SettingsStore
 import com.felicedesign.buttonremapper.service.CalibrationBus
@@ -73,10 +75,18 @@ private data class UiSnapshot(
     val matchDeviceId: Boolean,
     val longPressMs: Int,
     val doublePressMs: Int,
-    val bindings: Map<Gesture, ActionSpec>
+    val tapMs: Int,
+    val tapLongPressMs: Int,
+    val bindings: Map<Gesture, ActionSpec>,
+    val cycleIndices: Map<Gesture, Int>
 ) {
-    val doublePressBound: Boolean
-        get() = bindings[Gesture.DOUBLE]?.type?.let { it != ActionType.NONE } ?: false
+    val secondPressBound: Boolean
+        get() = listOf(Gesture.DOUBLE, Gesture.SHORT_THEN_LONG).any {
+            bindings[it]?.type?.let { type -> type != ActionType.NONE } ?: false
+        }
+
+    val usesTaps: Boolean
+        get() = bindings.values.any { it.type.needsPoints }
 
     val needsOverlay: Boolean
         get() = bindings.values.any { it.type.needsOverlayPermission }
@@ -92,7 +102,10 @@ private fun snapshot(context: Context, settings: SettingsStore) = UiSnapshot(
     matchDeviceId = settings.matchDeviceId,
     longPressMs = settings.longPressMs,
     doublePressMs = settings.doublePressMs,
-    bindings = Gesture.entries.associateWith { settings.action(it) }
+    tapMs = settings.tapMs,
+    tapLongPressMs = settings.tapLongPressMs,
+    bindings = Gesture.entries.associateWith { settings.action(it) },
+    cycleIndices = Gesture.entries.associateWith { settings.cycleIndex(it) }
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -186,16 +199,32 @@ fun MainScreen() {
                         appLabel = spec.arg
                             ?.takeIf { spec.type.needsApp }
                             ?.let { appLabel(context, it) },
-                        onClick = { pickerFor = gesture }
+                        cycleIndex = ui.cycleIndices[gesture] ?: 0,
+                        onClick = { pickerFor = gesture },
+                        onResetCycle = {
+                            settings.setCycleIndex(gesture, 0)
+                            revision++
+                        }
                     )
                 }
             }
 
-            if (!ui.doublePressBound) {
+            if (!ui.secondPressBound) {
                 Text(
-                    "Nothing is bound to a double press, so single presses fire the moment you " +
-                        "release the key instead of waiting out the double-press window.",
+                    "Nothing is bound to a double press or a press-then-hold, so single presses " +
+                        "fire the moment you release the key instead of waiting out the " +
+                        "double-press window.",
                     style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            if (ui.usesTaps) {
+                Text(
+                    "Tap actions fire at a fixed screen coordinate and cannot tell what is in " +
+                        "front of you — knowing that would need screen-content access, which " +
+                        "this app refuses. Rebind them when you are done.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
                 )
             }
 
@@ -219,6 +248,20 @@ fun MainScreen() {
                         range = 150f..600f,
                         onChange = { settings.doublePressMs = it; revision++ }
                     )
+                    if (ui.usesTaps) {
+                        SliderRow(
+                            label = "Synthesised tap",
+                            valueMs = ui.tapMs,
+                            range = 20f..300f,
+                            onChange = { settings.tapMs = it; revision++ }
+                        )
+                        SliderRow(
+                            label = "Synthesised long-press",
+                            valueMs = ui.tapLongPressMs,
+                            range = 300f..3000f,
+                            onChange = { settings.tapLongPressMs = it; revision++ }
+                        )
+                    }
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -262,7 +305,7 @@ fun MainScreen() {
                 pickerFor = null
                 when {
                     type.needsApp -> appPickerFor = gesture
-                    type.needsPoint -> calibrating = gesture to type
+                    type.needsPoints -> calibrating = gesture to type
                     else -> {
                         settings.setAction(gesture, ActionSpec(type))
                         revision++
@@ -275,9 +318,10 @@ fun MainScreen() {
 
     calibrating?.let { (gesture, type) ->
         CalibrateDialog(
+            type = type,
             serviceEnabled = ui.serviceEnabled,
-            onPicked = { point ->
-                settings.setAction(gesture, ActionSpec(type, point.encode()))
+            onPicked = { points ->
+                settings.setAction(gesture, ActionSpec(type, ScreenPoint.encodeList(points)))
                 calibrating = null
                 revision++
             },
@@ -339,30 +383,52 @@ private fun BindingRow(
     gesture: Gesture,
     spec: ActionSpec,
     appLabel: String?,
-    onClick: () -> Unit
+    cycleIndex: Int,
+    onClick: () -> Unit,
+    onResetCycle: () -> Unit
 ) {
-    Row(
+    val points = if (spec.type.needsPoints) ScreenPoint.decodeList(spec.arg) else emptyList()
+
+    Column(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(16.dp)
     ) {
-        Text(gesture.label, style = MaterialTheme.typography.bodyLarge)
-        Text(
-            when {
-                spec.type.needsApp -> appLabel ?: spec.arg ?: spec.type.label
-                spec.type.needsPoint ->
-                    ScreenPoint.decode(spec.arg)
-                        ?.let { "${spec.type.label}  ($it)" }
-                        ?: "${spec.type.label} — not calibrated"
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(gesture.label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                when {
+                    spec.type.needsApp -> appLabel ?: spec.arg ?: spec.type.label
+                    spec.type.needsPoints && points.isEmpty() ->
+                        "${spec.type.label} — not calibrated"
 
-                else -> spec.type.label
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.primary
-        )
+                    else -> spec.type.label
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        if (points.isNotEmpty()) {
+            // Marking the next step matters: the cycle counts rather than looks, so this
+            // is the only way to see that it has drifted out of phase.
+            Text(
+                points.mapIndexed { index, point ->
+                    val marker = if (points.size > 1 && index == cycleIndex) "▸" else " "
+                    "$marker ${index + 1}. $point"
+                }.joinToString("   "),
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            if (points.size > 1) {
+                TextButton(onClick = onResetCycle) { Text("Reset to step 1") }
+            }
+        }
     }
 }
 
@@ -412,31 +478,57 @@ private fun LearnKeyDialog(
 }
 
 /**
- * Hands the crosshair to the accessibility service and waits.
+ * Hands the crosshair to the accessibility service and collects one or more points.
  *
  * The dialog deliberately stays composed while you leave the app - Compose keeps the
  * composition alive across a stop, so the callback still lands when you come back from
- * the camera. [settings] is written from that callback rather than from a resume, so
- * the binding is saved even if this activity never regains focus.
+ * the camera. Settings are written from that callback rather than from a resume, so the
+ * binding is saved even if this activity never regains focus.
+ *
+ * Re-arming on [step] is what makes a multi-point cycle work: each saved point bumps the
+ * step, which disposes the old overlay and shows a fresh crosshair with a new prompt.
  */
 @Composable
 private fun CalibrateDialog(
+    type: ActionType,
     serviceEnabled: Boolean,
-    onPicked: (ScreenPoint) -> Unit,
+    onPicked: (List<ScreenPoint>) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val collected = remember { mutableStateListOf<ScreenPoint>() }
+    var step by remember { mutableIntStateOf(0) }
     var started by remember { mutableStateOf(false) }
 
-    DisposableEffect(Unit) {
-        started = CalibrationBus.start { point ->
-            if (point != null) onPicked(point) else onDismiss()
+    val many = type.points == PointNeed.MANY
+
+    DisposableEffect(step) {
+        val prompt = if (many) {
+            "Point ${step + 1}. Put the crosshair on the control you want this step to " +
+                "tap, then Save + add for another, or Save + done to finish."
+        } else {
+            "Drag the crosshair onto the button you want this gesture to tap, then Save."
+        }
+
+        // The left button discards while nothing is saved and finishes once something
+        // is - so a cycle can be ended without adding a point you did not want.
+        val cancelLabel = if (collected.isEmpty()) "Cancel" else "Done"
+
+        started = CalibrationBus.start(prompt, many, cancelLabel) { point, more ->
+            when {
+                point == null && collected.isEmpty() -> onDismiss()
+                point == null -> onPicked(collected.toList())
+                else -> {
+                    collected.add(point)
+                    if (more) step++ else onPicked(collected.toList())
+                }
+            }
         }
         onDispose { CalibrationBus.cancel() }
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Pick a spot") },
+        title = { Text(if (many) "Pick the spots" else "Pick a spot") },
         text = {
             Text(
                 when {
@@ -448,13 +540,25 @@ private fun CalibrateDialog(
                         "The accessibility service is not connected right now, so there " +
                             "is nothing to draw the crosshair. Try toggling it off and on."
 
-                    else ->
-                        "A crosshair is now floating on top of everything. Leave " +
-                            "ButtonRemapper, open your camera, drag the crosshair onto the " +
-                            "shutter and press Save.\n\n" +
-                            "Calibrate in the orientation you will actually shoot in — the " +
-                            "point is an absolute screen coordinate, so a shutter that moves " +
-                            "in landscape needs its own binding."
+                    else -> buildString {
+                        append(
+                            "A crosshair is floating on top of everything. Leave " +
+                                "ButtonRemapper, open your camera, and aim it."
+                        )
+                        if (many) {
+                            append(
+                                "\n\nCalibrate each step from the state it will fire in — " +
+                                    "aim at 3.5× while you are at 1×, then switch to 3.5× and " +
+                                    "aim at 1×. A row that re-flows around the selected chip " +
+                                    "is then measured in the layout it will actually meet."
+                            )
+                            append("\n\nSaved so far: ${collected.size}")
+                        }
+                        append(
+                            "\n\nCalibrate in the orientation and mode you will shoot in — " +
+                                "these are absolute screen coordinates."
+                        )
+                    }
                 },
                 style = MaterialTheme.typography.bodyMedium
             )

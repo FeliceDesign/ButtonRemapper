@@ -1,11 +1,25 @@
 package com.felicedesign.buttonremapper.data
 
-/** The three ways the key can be pressed. */
+/** The ways the key can be pressed. */
 enum class Gesture(val label: String, val key: String) {
     SINGLE("Single press", "single"),
     DOUBLE("Double press", "double"),
-    LONG("Long press", "long")
+    LONG("Long press", "long"),
+
+    /**
+     * Tap, then press and hold - "tap taaaap".
+     *
+     * Cheaper than a triple press, which is the obvious way to buy a fourth gesture and
+     * the wrong one: a triple press forces every single press to wait out two
+     * double-press windows before it can be ruled out. This one costs nothing. The
+     * second key-down of a double press already starts the long-press timer, so the
+     * gesture is just "that timer fired while the press count was 2".
+     */
+    SHORT_THEN_LONG("Press, then hold", "short_long")
 }
+
+/** How many calibrated screen points an action needs. */
+enum class PointNeed { NONE, ONE, MANY }
 
 /**
  * Everything this app can do.
@@ -17,10 +31,10 @@ enum class Gesture(val label: String, val key: String) {
  * reintroduce the WebView drag-and-drop breakage. That feature is intentionally
  * absent - see docs/DESIGN.md.
  *
- * TAP_POINT / LONG_PRESS_POINT are stateless in the same sense: they fire at a fixed
- * screen coordinate you calibrated yourself. We never look at what is *under* that
- * coordinate, which is exactly why they need no window content - and also why they
- * will happily tap whatever app happens to be in front of you.
+ * The tap actions are stateless in the same sense: they fire at coordinates you
+ * calibrated yourself. We never look at what is *under* a coordinate, which is exactly
+ * why they need no window content - and also why they will happily tap whatever app
+ * happens to be in front of you.
  */
 enum class ActionType(
     val label: String,
@@ -29,8 +43,8 @@ enum class ActionType(
     val needsOverlayPermission: Boolean = false,
     /** True if the action needs an argument (currently only a package name). */
     val needsApp: Boolean = false,
-    /** True if the action needs a calibrated screen coordinate as its argument. */
-    val needsPoint: Boolean = false
+    /** How many calibrated screen points the action needs. */
+    val points: PointNeed = PointNeed.NONE
 ) {
     NONE("Do nothing", "General"),
 
@@ -50,12 +64,30 @@ enum class ActionType(
     NOTIFICATIONS("Notification shade", "Navigation"),
     QUICK_SETTINGS("Quick settings", "Navigation"),
 
-    TAP_POINT("Tap a spot on screen", "Screen", needsPoint = true),
-    LONG_PRESS_POINT("Long-press a spot on screen", "Screen", needsPoint = true),
+    TAP_POINT("Tap a spot", "Screen", points = PointNeed.ONE),
+    LONG_PRESS_POINT("Long-press a spot", "Screen", points = PointNeed.ONE),
+
+    /**
+     * Taps a different spot each time, looping back to the first.
+     *
+     * Two points is a toggle (1x <-> 3.5x, photo <-> video); more is a carousel. It
+     * counts rather than looks - the app cannot see which zoom level is selected
+     * without window content - so changing the setting by hand puts the cycle out of
+     * phase until the next press catches it up. The UI shows which step is next and
+     * offers a reset for exactly that.
+     *
+     * Calibrating each point from the state it fires in is what makes this robust:
+     * aim at "3.5" while sitting at 1x, and at "1" while sitting at 3.5x, so a UI that
+     * re-flows around the selected item is measured in the layout it will meet.
+     */
+    TAP_CYCLE("Cycle through spots", "Screen", points = PointNeed.MANY),
 
     POWER_DIALOG("Power menu", "System"),
     LOCK_SCREEN("Lock screen", "System"),
     SCREENSHOT("Screenshot", "System");
+
+    val needsPoints: Boolean
+        get() = points != PointNeed.NONE
 
     companion object {
         fun fromKey(key: String?): ActionType =
@@ -74,8 +106,7 @@ data class ActionSpec(
  * from the top-left of the physical display, status and navigation bars included.
  *
  * Stored in [ActionSpec.arg] rather than in its own preference key so that each
- * gesture carries its own point - single press can tap the shutter while double press
- * taps the video-mode tab, with no extra storage wiring.
+ * gesture carries its own points with no extra storage wiring.
  */
 data class ScreenPoint(val x: Int, val y: Int) {
 
@@ -91,5 +122,11 @@ data class ScreenPoint(val x: Int, val y: Int) {
             val y = parts[1].trim().toIntOrNull() ?: return null
             return ScreenPoint(x, y)
         }
+
+        fun encodeList(points: List<ScreenPoint>): String =
+            points.joinToString(";") { it.encode() }
+
+        fun decodeList(raw: String?): List<ScreenPoint> =
+            raw?.split(';')?.mapNotNull { decode(it) } ?: emptyList()
     }
 }

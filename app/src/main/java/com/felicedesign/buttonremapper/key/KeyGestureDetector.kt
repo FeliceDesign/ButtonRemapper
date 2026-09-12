@@ -4,7 +4,8 @@ import android.os.Handler
 import com.felicedesign.buttonremapper.data.Gesture
 
 /**
- * Turns a stream of key down/up events into single, double and long press gestures.
+ * Turns a stream of key down/up events into single, double, long and press-then-hold
+ * gestures.
  *
  * We do this ourselves rather than leaning on the framework because we own the raw
  * key: nothing else in the system is going to interpret it for us.
@@ -18,8 +19,12 @@ class KeyGestureDetector(
     data class Config(
         val longPressMs: Long,
         val doublePressMs: Long,
-        /** If nothing is bound to a double press, single fires immediately on key-up. */
-        val doublePressBound: Boolean
+        /**
+         * True if anything needs us to wait and see whether a second press is coming -
+         * a double press or a press-then-hold. When nothing does, a single press fires
+         * the instant the key comes up instead of waiting out the window.
+         */
+        val secondPressBound: Boolean
     )
 
     private var pressCount = 0
@@ -27,8 +32,12 @@ class KeyGestureDetector(
 
     private val longPressRunnable = Runnable {
         longPressFired = true
+        // The hold is the second press of a tap-then-hold, not a plain long press.
+        // pressCount is already sitting at 2 because the second key-down bumped it and
+        // restarted this timer, so the two gestures cost exactly the same bookkeeping.
+        val gesture = if (pressCount >= 2) Gesture.SHORT_THEN_LONG else Gesture.LONG
         pressCount = 0
-        onGesture(Gesture.LONG)
+        onGesture(gesture)
     }
 
     private val singlePressRunnable = Runnable {
@@ -67,7 +76,7 @@ class KeyGestureDetector(
             return
         }
 
-        if (!cfg.doublePressBound) {
+        if (!cfg.secondPressBound) {
             pressCount = 0
             onGesture(Gesture.SINGLE)
             return

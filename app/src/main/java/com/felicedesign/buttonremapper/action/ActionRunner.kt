@@ -9,7 +9,9 @@ import android.util.Log
 import android.view.KeyEvent
 import com.felicedesign.buttonremapper.data.ActionSpec
 import com.felicedesign.buttonremapper.data.ActionType
+import com.felicedesign.buttonremapper.data.Gesture
 import com.felicedesign.buttonremapper.data.ScreenPoint
+import com.felicedesign.buttonremapper.data.SettingsStore
 
 /**
  * Executes a bound action.
@@ -20,12 +22,16 @@ import com.felicedesign.buttonremapper.data.ScreenPoint
  * `dispatchGesture` is the same deal - it fires a touch at a coordinate without ever
  * asking what is drawn there.
  */
-class ActionRunner(private val service: AccessibilityService) {
+class ActionRunner(
+    private val service: AccessibilityService,
+    private val settings: SettingsStore
+) {
 
     private val torch = TorchController(service)
     private val audioManager = service.getSystemService(AudioManager::class.java)
 
-    fun run(spec: ActionSpec) {
+    /** [gesture] is only needed so a cycle knows whose place in the queue to advance. */
+    fun run(gesture: Gesture, spec: ActionSpec) {
         when (spec.type) {
             ActionType.NONE -> Unit
 
@@ -46,8 +52,11 @@ class ActionRunner(private val service: AccessibilityService) {
             ActionType.NOTIFICATIONS -> global(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
             ActionType.QUICK_SETTINGS -> global(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
 
-            ActionType.TAP_POINT -> tap(spec.arg, TAP_MS)
-            ActionType.LONG_PRESS_POINT -> tap(spec.arg, LONG_PRESS_MS)
+            ActionType.TAP_POINT -> tapAt(ScreenPoint.decode(spec.arg), settings.tapMs.toLong())
+            ActionType.LONG_PRESS_POINT ->
+                tapAt(ScreenPoint.decode(spec.arg), settings.tapLongPressMs.toLong())
+
+            ActionType.TAP_CYCLE -> tapCycle(gesture, spec.arg)
 
             ActionType.POWER_DIALOG -> global(AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
             ActionType.LOCK_SCREEN -> global(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
@@ -76,6 +85,25 @@ class ActionRunner(private val service: AccessibilityService) {
     }
 
     /**
+     * Taps the next point in the cycle, then advances.
+     *
+     * The index moves whether or not the tap landed on anything - we cannot tell, and
+     * pretending otherwise would need window content. Two points make a toggle, more
+     * make a carousel.
+     */
+    private fun tapCycle(gesture: Gesture, arg: String?) {
+        val points = ScreenPoint.decodeList(arg)
+        if (points.isEmpty()) {
+            Log.w(TAG, "Cycle for $gesture has no calibrated points")
+            return
+        }
+
+        val index = settings.cycleIndex(gesture).coerceIn(0, points.lastIndex)
+        tapAt(points[index], settings.tapMs.toLong())
+        settings.setCycleIndex(gesture, (index + 1) % points.size)
+    }
+
+    /**
      * Synthesises a touch at an absolute display coordinate.
      *
      * This is the only input-injection route Android grants a normal app: everything
@@ -83,8 +111,7 @@ class ActionRunner(private val service: AccessibilityService) {
      * is gated behind the signature-level INJECT_EVENTS. Accessibility gesture dispatch
      * has its own privileged channel, which is why this works at all.
      */
-    private fun tap(arg: String?, durationMs: Long) {
-        val point = ScreenPoint.decode(arg)
+    private fun tapAt(point: ScreenPoint?, durationMs: Long) {
         if (point == null) {
             Log.w(TAG, "Tap action has no calibrated point")
             return
@@ -126,11 +153,5 @@ class ActionRunner(private val service: AccessibilityService) {
 
     private companion object {
         const val TAG = "ActionRunner"
-
-        /** Long enough to register everywhere, short enough not to read as a hold. */
-        const val TAP_MS = 60L
-
-        /** Comfortably past the platform long-press threshold (500 ms). */
-        const val LONG_PRESS_MS = 700L
     }
 }

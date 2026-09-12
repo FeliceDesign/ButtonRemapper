@@ -27,17 +27,17 @@ class RemapAccessibilityService : AccessibilityService(), CalibrationBus.Host {
     override fun onServiceConnected() {
         super.onServiceConnected()
         settings = SettingsStore(this)
-        runner = ActionRunner(this)
+        runner = ActionRunner(this, settings)
         detector = KeyGestureDetector(
             handler = Handler(Looper.getMainLooper()),
             config = {
                 KeyGestureDetector.Config(
                     longPressMs = settings.longPressMs.toLong(),
                     doublePressMs = settings.doublePressMs.toLong(),
-                    doublePressBound = settings.isDoublePressBound
+                    secondPressBound = settings.isSecondPressBound
                 )
             },
-            onGesture = { gesture -> runner.run(settings.action(gesture)) }
+            onGesture = { gesture -> runner.run(gesture, settings.action(gesture)) }
         )
         calibration = CalibrationOverlay(this)
         CalibrationBus.registerHost(this)
@@ -49,8 +49,12 @@ class RemapAccessibilityService : AccessibilityService(), CalibrationBus.Host {
     // The crosshair has to outlive the activity that asked for it, because the whole
     // point is to aim it at someone else's app. Hosting it here is what makes that work.
 
-    override fun showCalibrationOverlay(onResult: (ScreenPoint?) -> Unit) =
-        calibration.show(onResult)
+    override fun showCalibrationOverlay(
+        prompt: String,
+        allowMore: Boolean,
+        cancelLabel: String,
+        onResult: (ScreenPoint?, Boolean) -> Unit
+    ) = calibration.show(prompt, allowMore, cancelLabel, onResult)
 
     override fun hideCalibrationOverlay() = calibration.hide()
 
