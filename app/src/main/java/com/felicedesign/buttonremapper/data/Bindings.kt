@@ -107,20 +107,29 @@ data class ActionSpec(
  *
  * Stored in [ActionSpec.arg] rather than in its own preference key so that each
  * gesture carries its own points with no extra storage wiring.
+ *
+ * [durationMs] is how long the touch is held at this point, and it is per-point for a
+ * reason: how long you hold is not a detail, it selects which gesture the target thinks
+ * it received. A camera shutter may want a leisurely touch, while a zoom chip row that
+ * snaps on a tap and opens a continuous slider on a hold wants the briefest one
+ * possible. One global duration cannot satisfy both. Null falls back to the global
+ * setting for the action.
  */
-data class ScreenPoint(val x: Int, val y: Int) {
+data class ScreenPoint(val x: Int, val y: Int, val durationMs: Int? = null) {
 
-    fun encode(): String = "$x,$y"
+    fun encode(): String = if (durationMs == null) "$x,$y" else "$x,$y,$durationMs"
 
     override fun toString(): String = "$x, $y"
 
     companion object {
+        /** Accepts "x,y" as well as "x,y,ms", so points saved before durations still load. */
         fun decode(raw: String?): ScreenPoint? {
             val parts = raw?.split(',') ?: return null
-            if (parts.size != 2) return null
+            if (parts.size !in 2..3) return null
             val x = parts[0].trim().toIntOrNull() ?: return null
             val y = parts[1].trim().toIntOrNull() ?: return null
-            return ScreenPoint(x, y)
+            val duration = if (parts.size == 3) parts[2].trim().toIntOrNull() else null
+            return ScreenPoint(x, y, duration)
         }
 
         fun encodeList(points: List<ScreenPoint>): String =

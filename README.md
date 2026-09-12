@@ -153,9 +153,13 @@ Two things to know:
   the photo chip row is `0.6 1 2 3.5 7` and the video row is `0.6 1 3.5`: `3.5` lands in
   almost the same place in both, but photo's `1` sits roughly where video's `0.6` does.
   Calibrate in the orientation *and* mode you will shoot in.
-- **Tap timings are adjustable** under Timing once a tap action is bound, for targets that
-  ignore a touch that is too brief. Some shutter buttons want noticeably longer than the
-  60 ms default.
+- **Hold time is per-point**, under **Tune** on the binding, because it selects *which
+  gesture* the target thinks it got rather than just tuning reliability. A shutter button
+  may want 120 ms while a zoom chip row — which snaps on a tap and opens a continuous
+  slider on a hold — needs 10–30 ms. One global value cannot satisfy both; the Timing card
+  only sets the fallback for points that have no value of their own.
+- **Tune** also re-aims a single point, so fixing one step of a cycle does not mean
+  re-calibrating all of them.
 
 ### When a tap does nothing
 
@@ -166,8 +170,11 @@ button. Pressing a number fires a real tap there and reports whether the system
 
 - **Dot is off the control** → re-calibrate. Calibrate in the same orientation, camera
   mode and zoom state the tap will fire in.
+- **Delivered, but the wrong thing happened** → the target read the touch as a different
+  gesture. A tap that opens a slider or a menu is being read as a *hold*: press **Tune**
+  on the binding and take that point's hold time down to 10–30 ms.
 - **Delivered, nothing happened** → the app got the touch and ignored it. Try a longer
-  synthesised tap first.
+  hold.
 - **Cancelled** → something interrupted the gesture before it landed.
 
 The overlay pulls itself off screen before a test tap. A non-touchable overlay still marks

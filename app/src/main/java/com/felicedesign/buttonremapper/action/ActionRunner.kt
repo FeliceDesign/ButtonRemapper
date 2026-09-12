@@ -53,9 +53,15 @@ class ActionRunner(
             ActionType.NOTIFICATIONS -> global(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
             ActionType.QUICK_SETTINGS -> global(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
 
-            ActionType.TAP_POINT -> tapAt(ScreenPoint.decode(spec.arg), settings.tapMs.toLong())
-            ActionType.LONG_PRESS_POINT ->
-                tapAt(ScreenPoint.decode(spec.arg), settings.tapLongPressMs.toLong())
+            ActionType.TAP_POINT -> {
+                val point = ScreenPoint.decode(spec.arg)
+                tapAt(point, durationFor(point, settings.tapMs))
+            }
+
+            ActionType.LONG_PRESS_POINT -> {
+                val point = ScreenPoint.decode(spec.arg)
+                tapAt(point, durationFor(point, settings.tapLongPressMs))
+            }
 
             ActionType.TAP_CYCLE -> tapCycle(gesture, spec.arg)
 
@@ -115,7 +121,8 @@ class ActionRunner(
         }
 
         val index = settings.cycleIndex(gesture).coerceIn(0, points.lastIndex)
-        tapAt(points[index], settings.tapMs.toLong())
+        val point = points[index]
+        tapAt(point, durationFor(point, settings.tapMs))
         settings.setCycleIndex(gesture, (index + 1) % points.size)
     }
 
@@ -137,12 +144,15 @@ class ActionRunner(
             return
         }
 
-        // StrokeDescription rejects an empty path, and moveTo alone counts as empty, so
-        // the stroke travels one pixel. That is well under touch slop, so the target
-        // still sees a clean tap rather than a drag.
+        // StrokeDescription throws "Path has zero length", so a tap cannot be truly
+        // stationary - it must travel something. Keep that something as small as the
+        // check allows and on one axis: the framework samples the stroke into MOVE
+        // events, and a control that begins a drag on any movement at all (a zoom chip
+        // row that turns into a slider, say) is the thing we are trying not to trip.
+        // A tenth of a pixel rounds away long before any touch-slop comparison.
         val path = Path().apply {
             moveTo(point.x.toFloat(), point.y.toFloat())
-            lineTo(point.x + 1f, point.y + 1f)
+            lineTo(point.x + MIN_STROKE_PX, point.y.toFloat())
         }
         val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
         val callback = onResult?.let {
@@ -161,6 +171,10 @@ class ActionRunner(
             onResult?.invoke(false)
         }
     }
+
+    /** A point's own hold time wins; the global setting is only the fallback. */
+    private fun durationFor(point: ScreenPoint?, fallback: Int): Long =
+        (point?.durationMs ?: fallback).toLong()
 
     private fun launchApp(packageName: String?) {
         if (packageName.isNullOrEmpty()) return
@@ -182,5 +196,8 @@ class ActionRunner(
 
     private companion object {
         const val TAG = "ActionRunner"
+
+        /** Just enough length to clear StrokeDescription's zero-length rejection. */
+        const val MIN_STROKE_PX = 0.1f
     }
 }

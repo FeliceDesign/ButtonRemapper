@@ -59,8 +59,10 @@ class RemapAccessibilityService : AccessibilityService(), CalibrationBus.Host {
     override fun hideCalibrationOverlay() = calibration.hide()
 
     override fun showPointMarkers(points: List<ScreenPoint>, longPress: Boolean) {
-        val duration = if (longPress) settings.tapLongPressMs else settings.tapMs
-        calibration.showMarkers(points) { point -> runner.testTap(point, duration.toLong()) }
+        val fallback = if (longPress) settings.tapLongPressMs else settings.tapMs
+        calibration.showMarkers(points) { point ->
+            runner.testTap(point, (point.durationMs ?: fallback).toLong())
+        }
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {

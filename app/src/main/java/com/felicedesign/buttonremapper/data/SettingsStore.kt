@@ -96,6 +96,17 @@ class SettingsStore(context: Context) {
             .apply()
     }
 
+    /**
+     * Updates only the argument, leaving the cycle position alone.
+     *
+     * Unlike [setAction], which resets it: re-aiming or re-timing a point keeps the
+     * same number of points in the same order, so where you are in the cycle is still
+     * meaningful and throwing it away would cost a press to recover.
+     */
+    fun setActionArg(gesture: Gesture, arg: String?) {
+        prefs.edit().putString("arg_${gesture.key}", arg).apply()
+    }
+
     // --- cycle position --------------------------------------------------------
 
     /**

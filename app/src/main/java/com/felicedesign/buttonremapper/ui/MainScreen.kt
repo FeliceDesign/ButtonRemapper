@@ -130,6 +130,7 @@ fun MainScreen() {
     var pickerFor by remember { mutableStateOf<Gesture?>(null) }
     var appPickerFor by remember { mutableStateOf<Gesture?>(null) }
     var calibrating by remember { mutableStateOf<Pair<Gesture, ActionType>?>(null) }
+    var editingPoints by remember { mutableStateOf<Gesture?>(null) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("ButtonRemapper") }) }) { padding ->
         Column(
@@ -210,7 +211,8 @@ fun MainScreen() {
                                 ScreenPoint.decodeList(spec.arg),
                                 longPress = spec.type == ActionType.LONG_PRESS_POINT
                             )
-                        }
+                        },
+                        onEditPoints = { editingPoints = gesture }
                     )
                 }
             }
@@ -335,6 +337,23 @@ fun MainScreen() {
         )
     }
 
+    editingPoints?.let { gesture ->
+        val spec = ui.bindings[gesture] ?: ActionSpec()
+        PointEditorDialog(
+            spec = spec,
+            defaultMs = if (spec.type == ActionType.LONG_PRESS_POINT) {
+                ui.tapLongPressMs
+            } else {
+                ui.tapMs
+            },
+            onChange = { updated ->
+                settings.setActionArg(gesture, ScreenPoint.encodeList(updated))
+                revision++
+            },
+            onDismiss = { editingPoints = null }
+        )
+    }
+
     appPickerFor?.let { gesture ->
         AppPickerDialog(
             onPick = { packageName ->
@@ -392,7 +411,8 @@ private fun BindingRow(
     cycleIndex: Int,
     onClick: () -> Unit,
     onResetCycle: () -> Unit,
-    onCheckPoints: () -> Unit
+    onCheckPoints: () -> Unit,
+    onEditPoints: () -> Unit
 ) {
     val points = if (spec.type.needsPoints) ScreenPoint.decodeList(spec.arg) else emptyList()
 
@@ -427,13 +447,15 @@ private fun BindingRow(
             Text(
                 points.mapIndexed { index, point ->
                     val marker = if (points.size > 1 && index == cycleIndex) "▸" else " "
-                    "$marker ${index + 1}. $point"
+                    val hold = point.durationMs?.let { " ${it}ms" } ?: ""
+                    "$marker ${index + 1}. $point$hold"
                 }.joinToString("   "),
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 modifier = Modifier.padding(top = 4.dp)
             )
             Row {
-                TextButton(onClick = onCheckPoints) { Text("Check points") }
+                TextButton(onClick = onEditPoints) { Text("Tune") }
+                TextButton(onClick = onCheckPoints) { Text("Check") }
                 if (points.size > 1) {
                     TextButton(onClick = onResetCycle) { Text("Reset to step 1") }
                 }
@@ -574,6 +596,81 @@ private fun CalibrateDialog(
             )
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * Per-point tuning: where each point is, and how long the touch is held there.
+ *
+ * Hold time is per-point because it is not a cosmetic detail - it decides which gesture
+ * the target believes it got. A chip row that snaps on a tap and opens a continuous
+ * slider on a hold needs the shortest touch available, while a shutter button may want
+ * a longer one. A single global value has to be wrong for one of them.
+ */
+@Composable
+private fun PointEditorDialog(
+    spec: ActionSpec,
+    defaultMs: Int,
+    onChange: (List<ScreenPoint>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val points = remember(spec.arg) { ScreenPoint.decodeList(spec.arg) }
+    var reaiming by remember { mutableStateOf<Int?>(null) }
+
+    reaiming?.let { index ->
+        DisposableEffect(index) {
+            CalibrationBus.start(
+                "Re-aim point ${index + 1}. Drag the crosshair onto the control, then Save."
+            ) { point, _ ->
+                if (point != null) {
+                    // Keep the hold time already tuned for this point; only move it.
+                    val kept = points[index].durationMs
+                    onChange(points.toMutableList().also { it[index] = point.copy(durationMs = kept) })
+                }
+                reaiming = null
+            }
+            onDispose { CalibrationBus.cancel() }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Tune points") },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                items(points.size) { index ->
+                    val point = points[index]
+                    Column(Modifier.padding(bottom = 16.dp)) {
+                        Text(
+                            "${index + 1}.  $point",
+                            style = MaterialTheme.typography.bodyLarge
+                                .copy(fontFamily = FontFamily.Monospace)
+                        )
+                        SliderRow(
+                            label = "Hold",
+                            valueMs = point.durationMs ?: defaultMs,
+                            range = 10f..500f,
+                            onChange = { ms ->
+                                onChange(
+                                    points.toMutableList()
+                                        .also { it[index] = point.copy(durationMs = ms) }
+                                )
+                            }
+                        )
+                        TextButton(onClick = { reaiming = index }) { Text("Re-aim this point") }
+                    }
+                }
+                item {
+                    Text(
+                        "If a tap opens a slider or a menu instead of selecting, the touch is " +
+                            "being read as a hold — take this down. 10–30 ms is about as close " +
+                            "to an instant tap as the gesture API allows.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
     )
 }
 
